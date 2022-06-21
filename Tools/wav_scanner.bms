@@ -1,0 +1,110 @@
+# scan data for wave files
+# RIFF and RIFX header supported
+# note: There are wave files with a wrong file size after RIFF/RIFX
+#       This script takes the stream size, adds the header size and writes the correct size after RIFF/RIFX
+# (c) 2022-06-14 by AlphaTwentyThree
+#
+# future update plans:
+# - option to also write data between found wave files to disk
+# - option to automatically transform the file to a playable or at least decodable format
+
+set NAMEPOS 0							# if the name is given before the file start, this is the offset
+set UNI 0								# toggles between text and unicode for file name
+set INCNAME 1 							# toggles between format "[file name]~[stream name]" and "[stream name]"
+
+for i = 1								# run through loop with count variable i
+	FindLoc OFFSET string "WAVE" 0 ""	# search for "WAVE", save position as variable OFFSET
+	if OFFSET == ""						# when nothing is found
+		cleanexit						# the script exits (e.g. at end of file)
+	endif
+	math OFFSET -= 8					# jump to possible
+	goto OFFSET							# RIFF/RIFX file start
+	getDstring IDENT 4					# read string of 4 bytes, save variable as IDENT
+	if IDENT == "RIFX"					# differentiate between header possibilities
+		endian big						# set endianness to big, if file has RIFX identifier
+		callfunction write 1			# see function section below
+	elif IDENT == "RIFF"				# endianness stays little
+		callfunction write 1			# also run function
+	else								# string "WAVE" found, but doesn't belong to wave file
+		set SIZE 0xc					# do as if something with 0xc bytes was found to continue search from the right position
+	endif
+	set SEARCH OFFSET					# set marker to position from where to search next
+	math SEARCH += SIZE					# (that would be after the file that was found)
+	if SEARCH == FSIZE					# in case the last found file ends with the main file, we exit
+		cleanexit
+	endif
+	goto SEARCH							# if we haven't exited the script above, we set out cursor to after the last found file
+next i
+
+startfunction write						# function "write" starts here, is called when a wave file is found above
+	set TNAME ""
+	goto OFFSET							# set cursor to the beginning of the found file
+	get DUMMY long						# RIFF/RIFX identifier, not needed
+	get DUMMY long						# riff size, not needed
+	get DUMMY long						# "WAVE", not needed, we arrive at the "fmt " section
+	for									# loop search for the "data" section at the start of the stream (get the stream size from there)
+		getDstring AREA_NAME 4			# name of area in header
+		get AREA_SIZE long				# size of area in header
+		savepos MYOFF					# save position we are at
+		if AREA_NAME == "data"			# when we arrive at the needed "data" area:
+			break						# we exit the loop
+		else							# otherwise:
+			if AREA_NAME == "LIST"		# that's the area of the marker names
+				callfunction retrievename 1 # see below
+			endif
+			math MYOFF += AREA_SIZE		# not reached "data" area -> adjust cursor position...
+			goto MYOFF					# ... and go there
+		endif
+	next								# remember: the cursor is now directly at the stream start
+	xmath SIZE "MYOFF - OFFSET + AREA_SIZE"
+	log MEMORY_FILE OFFSET SIZE			# write file to memory
+	math SIZE -= 8						# subtract 8 bytes to get the riff size
+	putVarChr MEMORY_FILE 4 SIZE long 	# write the correct riff size to the header inside the memory
+	if NAMEPOS != 0						# if a name position is given...
+		xmath TMP "OFFSET + NAMEPOS"	# calculate name offset,
+		goto TMP						# go there and...
+		if UNI == 1
+			get TNAME unicode			# get name in unicode or...
+		else
+			get TNAME string			# get name as string.
+		endif
+	else
+	endif
+
+	callfunction getType 1				# differentiate between different RIFF types
+	if INCNAME == 1						# if source file name should be kept, add stream name with ~
+		if TNAME == ""
+			get BNAME basename
+			string NAME p "%s_%d.%s" BNAME i EXT
+		else
+			string NAME p "%s~%s.%s" NAME TNAME EXT 
+		endif
+	else
+		string NAME p "%s.%s" TNAME EXT # otherwise use stream name as write name
+	endif
+	math SIZE += 8						# add the subtracted 8 bytes again
+	log NAME 0 SIZE MEMORY_FILE			# write file in memory to disk
+endfunction								# remember that we continue with our next i now!
+
+startfunction retrievename				# get possible file name from first marker name, remember: our cursor is after the size of the LIST area
+	get DUMMY long 						# always "adtl", not needed
+	get DUMMY long						# always "labl", not needed
+	get MSIZE long						# size of the label area for this marker
+	math MSIZE -= 4						# subtracting 4 bytes leaves us with the length of the marker label
+	get DUMMY long						# marker type, not needed
+	getDstring TNAME MSIZE				# cursor is at the beginning of the label name, now get the marker name with the desired length MSIZE
+endfunction
+
+startfunction getType					# determine needed extension by codec number
+	goto 0x14 MEMORY_FILE				# position of codec in RIFF format
+	get TYPE short MEMORY_FILE			# read codec magic number
+	if TYPE == 1						# PCM
+		set EXT "wav"
+	elif TYPE == 0x270					# Sony Atrac3
+		set EXT "at3"
+	elif TYPE == 0xfffe					# Sona Atrac 9
+		set EXT "at3"
+	else								# some other codec, probably playable with vgmstream
+		set EXT "lwav"
+	endif
+endfunction
