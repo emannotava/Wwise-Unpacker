@@ -1,3 +1,13 @@
+# Important Note
+This is a fork of Vextil's Wwise Unpacker,
+the only changes made to it are the addition
+of an updated WAVE Scanner script by AlphaTwentyThree.
+
+All I did was update an old github project that hasn't been updated in years.
+The ones who put actual time and effort into it are:
+ - Vextil (Wwise Unpacker)
+ - AlphaTwentyThree (wav_scanner.bms, this script is essentially the very heart of Wwise Unpacker, it wouldn't function without it!)
+
 # Wwise-Unpacker
 Unpack game audio Wwise files (pck, bnk)
 
